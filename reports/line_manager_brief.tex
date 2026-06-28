@@ -1,0 +1,258 @@
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{array}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!50!black,
+    urlcolor=blue!50!black
+}
+
+\setlist[itemize]{leftmargin=1.5em, itemsep=0.3em, topsep=0.3em}
+
+\title{Time-Varying Break-Even Growth Rates for the Swiss Labour Market:\\Line Manager Brief}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Executive Summary}
+\begin{itemize}
+    \item Benchmark result: in the direct \(Y \rightarrow U\) specification, the implied break-even GDP growth rate is about \(1.9\%\) annualized on average and about \(2.1\%\) annualized in the latest quarter, 2025 Q4.
+    \item Time variation is present but modest under the preferred calibration with \(\sigma_{\eta}=0.05\,\sigma_{OLS}\): the direct \(Y \rightarrow U\) break-even series has a standard deviation of about \(0.2\) percentage points annualized.
+    \item Additional model results:
+    the \(Y \rightarrow E\) specification implies a negative break-even GDP growth rate on average,
+    while the \(E \rightarrow U\) specification implies break-even employment growth of about \(0.9\%\) annualized on average and \(1.2\%\) annualized in 2025 Q4.
+    \item Internal consistency check: chaining \(Y \rightarrow E\) and \(E \rightarrow U\) gives an implied \(Y \rightarrow U\) break-even rate close to the direct estimate in levels, but more volatile over time.
+    \item Practical read: the direct \(Y \rightarrow U\) specification should remain the main benchmark; the employment-based specifications are useful companion views and interpretation aids.
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.2cm} >{\raggedleft\arraybackslash}p{2.6cm} >{\raggedleft\arraybackslash}p{2.9cm} >{\raggedleft\arraybackslash}p{2.8cm}}
+\toprule
+Model & Break-even threshold & Scenario 1: \(Y=0\%\) / \(E=0\%\) & Scenario 2: \(Y=2\%\) / \(E=1\%\) \\
+\midrule
+\(Y \rightarrow U\) & \(2.1\) & \(0.1\) & \(0.0\) \\
+\(Y \rightarrow E\) & \(-1.2\) & \(0.4\) & \(1.1\) \\
+\(E \rightarrow U\) & \(1.2\) & \(0.1\) & \(0.0\) \\
+\bottomrule
+\end{tabular}
+\caption{Latest model readings for 2025 Q4. Growth rates are annualized.}
+\end{table}
+
+\section{Question and Motivation}
+\begin{itemize}
+    \item Objective: estimate the pace of Swiss real GDP growth needed to stabilize labour-market conditions, and allow that threshold to vary over time.
+    \item Policy relevance: this is a compact way to summarize how labour-market resilience may be changing even if output growth, unemployment, and employment all remain noisy in the short run.
+    \item Strategy: start from transparent reduced-form relationships, then let only the intercept vary over time in a local-level state-space model.
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.98\textwidth]{../outputs/memo_motivation_scatters.png}
+    \caption{Motivation from the raw reduced-form relationships among GDP growth, employment growth, and unemployment changes.}
+\end{figure}
+
+\section{Time-Invariant Evidence}
+\begin{itemize}
+    \item Baseline static reduced-form equation:
+    \[
+    U_t = \alpha + \beta_0 Y_t + \beta_1 Y_{t-1} + \beta_2 Y_{t-2} + \varepsilon_t.
+    \]
+    \item Estimated benchmark equation:
+    \[
+    U_t = 0.123 - 0.108\,Y_t - 0.092\,Y_{t-1} - 0.070\,Y_{t-2} + \varepsilon_t,
+    \]
+    with \(R^2 \approx 0.48\).
+    \item Interpreting ``break-even'' as zero unemployment change and assuming constant GDP growth across current and lagged terms implies:
+    \[
+    Y_t^\ast = -\frac{\alpha}{\beta_0+\beta_1+\beta_2}.
+    \]
+    \item Static benchmark:
+    \(Y_t^\ast \approx 0.455\%\) q/q, or about \(1.83\%\) annualized.
+    \item ARDL robustness check:
+    \[
+    U_t = \alpha + \phi U_{t-1} + \beta_0 Y_t + \beta_1 Y_{t-1} + \beta_2 Y_{t-2} + \varepsilon_t.
+    \]
+    \item Estimated ARDL equation:
+    \[
+    U_t = 0.054 + 0.714\,U_{t-1} - 0.105\,Y_t - 0.015\,Y_{t-1} - 0.007\,Y_{t-2} + \varepsilon_t,
+    \]
+    with \(R^2 \approx 0.80\) and much better residual behavior.
+    \item The implied ARDL break-even GDP growth is close to the simpler benchmark:
+    about \(0.431\%\) q/q, or \(1.74\%\) annualized.
+\end{itemize}
+
+\section{Main Time-Varying Results}
+\begin{itemize}
+    \item We use the same local-level state-space routine across the three reduced-form relationships, but only illustrate the mechanics in detail for the benchmark \(Y \rightarrow U\) specification.
+    \item Preferred benchmark specification:
+    \[
+    U_t = c_t + \beta_0 Y_t + \beta_1 Y_{t-1} + \beta_2 Y_{t-2} + \gamma_2 D_{2020Q2,t} + \gamma_3 D_{2020Q3,t} + \varepsilon_t,
+    \]
+    with
+    \[
+    c_t = c_{t-1} + \eta_t.
+    \]
+    \item Estimation is done in \texttt{statsmodels} with a local-level model; the state innovation standard deviation is calibrated to \(\sigma_{\eta}=0.05\,\sigma_{OLS}\).
+    \item The implied break-even GDP growth rate in the benchmark model is:
+    \[
+    Y_t^\ast = -\frac{c_t}{\beta_0+\beta_1+\beta_2}.
+    \]
+    \item Main findings:
+    average break-even GDP growth is \(1.86\%\) annualized,
+    the latest reading in 2025 Q4 is \(2.09\%\) annualized,
+    and the annualized standard deviation is only about \(0.20\) percentage points.
+    \item Scenario interpretation:
+    under GDP stagnation, the model implies unemployment rises by about \(0.12\) percentage points on average;
+    under GDP growth of \(2\%\) annualized, the implied unemployment change is essentially zero on average and \(0.006\) percentage points in 2025 Q4.
+    \item Subsection 1, \(Y \rightarrow E\):
+    \[
+    E_t = c_t + \beta_0 Y_t + \beta_1 Y_{t-1} + \beta_2 Y_{t-2} + \gamma_2 D_{2020Q2,t} + \gamma_3 D_{2020Q3,t} + \varepsilon_t.
+    \]
+    This maps GDP growth into employment growth rather than unemployment changes.
+    It implies an average break-even GDP growth rate of \(-0.76\%\) annualized and a latest reading of \(-1.18\%\) annualized in 2025 Q4; under GDP growth of \(2\%\) annualized, implied employment growth is about \(0.98\%\) annualized on average and \(1.14\%\) annualized in 2025 Q4.
+    \item Subsection 2, \(E \rightarrow U\):
+    \[
+    U_t = c_t + \theta_0 E_t + \theta_1 E_{t-1} + \theta_2 E_{t-2} + \gamma_2 D_{2020Q2,t} + \gamma_3 D_{2020Q3,t} + \varepsilon_t.
+    \]
+    This yields a break-even employment-growth concept,
+    \[
+    E_t^\ast = -\frac{c_t}{\theta_0+\theta_1+\theta_2}.
+    \]
+    Average break-even employment growth is \(0.91\%\) annualized and the latest reading is \(1.16\%\) annualized in 2025 Q4; with employment growth of \(1\%\) annualized, implied unemployment change is close to zero on average and \(0.017\) percentage points in 2025 Q4.
+    \item Bottom line across the three specifications:
+    the direct \(Y \rightarrow U\) model remains the most interpretable headline measure,
+    while \(Y \rightarrow E\) and \(E \rightarrow U\) add complementary information on employment dynamics and labour-market transmission.
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.83\textwidth]{../outputs/memo_y_to_u.png}
+    \caption{Preferred benchmark: time-varying \(Y \rightarrow U\) specification. Top: implied break-even GDP growth. Bottom: implied unemployment change under two GDP scenarios.}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.83\textwidth]{../outputs/memo_y_to_e.png}
+    \caption{Time-varying \(Y \rightarrow E\) specification. Top: implied break-even GDP growth for employment. Bottom: implied employment growth under two GDP scenarios.}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.83\textwidth]{../outputs/memo_u_on_e.png}
+    \caption{Time-varying \(E \rightarrow U\) specification. Top: implied break-even employment growth. Bottom: implied unemployment change under two employment-growth scenarios.}
+\end{figure}
+
+\section{Direct Versus Chained \(Y \rightarrow U\)}
+\begin{itemize}
+    \item A useful internal check is to combine the two employment-based steps:
+    first \(Y \rightarrow E\), then \(E \rightarrow U\).
+    \item In the static case, the implied chained break-even GDP growth rate is \(1.80\%\) annualized versus \(1.86\%\) annualized in the direct \(Y \rightarrow U\) regression.
+    \item In the time-varying case, the mean chained break-even rate is \(1.79\%\) annualized versus \(1.86\%\) annualized for the direct estimate.
+    \item The main difference is volatility:
+    the direct annualized series has a standard deviation of about \(0.20\) percentage points,
+    while the chained series has a standard deviation of about \(0.43\) percentage points.
+    \item Interpretation:
+    the chained route broadly validates the level of the direct estimate, but it amplifies time variation and is therefore best read as a consistency exercise rather than the headline measure.
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.83\textwidth]{../outputs/memo_direct_vs_chained.png}
+    \caption{Direct versus chained break-even GDP growth.}
+\end{figure}
+
+\section{A Diagnostic Tool: Labour-Implied GDP Growth}
+\begin{itemize}
+    \item As an additional diagnostic, we invert the labour-market equations and ask what GDP growth path would be most consistent with the observed unemployment path and the observed employment path.
+    \item Concretely, we take the estimated time-varying labour-market equations as given, treat \(U\) or \(E\) as observed, treat \(Y\) as latent, and impose a separate AR(2) law of motion for GDP growth.
+    \item The GDP AR(2) is estimated with the same two pandemic pulse dummies used elsewhere, but the inverse filter itself does not force those dummies into the latent GDP path.
+    \item This is not an alternative measure of official GDP. It is a model-based consistency tool: if the labour-market equations are informative, the implied GDP lines should co-move with actual GDP.
+    \item The results are encouraging but not exact. The unemployment-implied GDP series has a correlation of about \(0.45\) with actual GDP growth, while the employment-implied GDP series has a correlation of about \(0.49\).
+    \item In the latest quarter, 2025 Q4, actual GDP growth is about \(0.6\%\) annualized, compared with \(1.7\%\) annualized for the unemployment-implied series and \(1.0\%\) annualized for the employment-implied series.
+    \item Practical interpretation:
+    this tool is useful as a triangulation device. When the labour-implied GDP lines move well away from measured GDP, that flags either unusual labour-market adjustment or limits of the reduced-form mapping.
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.83\textwidth]{../outputs/memo_implied_gdp_tool.png}
+    \caption{Actual GDP growth and the GDP growth rates implied by the unemployment and employment equations.}
+\end{figure}
+
+\section{Conclusion}
+\begin{itemize}
+    \item The cleanest headline result remains the direct \(Y \rightarrow U\) specification.
+    \item On that benchmark, Swiss break-even GDP growth is close to \(1.9\%\) annualized on average and just above \(2.0\%\) annualized in the latest quarter.
+    \item The preferred calibration implies meaningful but not excessive time variation.
+    \item The employment-based specifications are useful corroborating evidence:
+    they broadly support the level of the direct benchmark when chained together, but they are less stable as standalone break-even measures.
+    \item Recommended communication line:
+    ``A reduced-form time-varying benchmark suggests that Swiss GDP growth of around \(2\%\) annualized is currently needed to keep unemployment broadly stable.'' 
+\end{itemize}
+
+\appendix
+
+\section{Data Construction Summary}
+\begin{itemize}
+    \item Employment:
+    a blended quarterly employment series is constructed by averaging q/q growth from the seasonally adjusted household and firm surveys, cumulating the average growth rate into an index, and scaling levels to match the household survey average in 2019.
+    \item Household survey:
+    the raw household-employment series is seasonally adjusted back to the 1970s using a quarterly STL-based procedure and then chained to the official seasonally adjusted BFS series from 2010 onward.
+    \item Unemployment:
+    the raw monthly seasonally adjusted series is aggregated to quarterly averages.
+    \item GDP:
+    the memo uses seasonally, calendar-, and sport-adjusted real GDP from SECO and its q/q growth rate.
+    \item Final analysis variables:
+    \(E\) is q/q growth of the constructed employment series,
+    \(U\) is the quarterly change in the unemployment rate,
+    and \(Y\) is q/q GDP growth.
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.83\textwidth]{../outputs/memo_data_construction.png}
+    \caption{Data construction: the project blends household and firm employment information while preserving the household-level anchor.}
+\end{figure}
+
+\section{Data Appendix: Key Choices from Notebook 02}
+\begin{itemize}
+    \item The project uses both the BFS household and firm employment concepts rather than choosing only one source.
+    \item The long household series is back-extended via internal seasonal adjustment, benchmarked to the official overlap.
+    \item The final blended employment measure is intended to preserve household-level scaling while smoothing quarter-to-quarter survey-specific noise.
+    \item Quarterly aggregation choices matter:
+    unemployment is quarter-average,
+    while GDP and employment are used in quarterly growth-rate form.
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.83\textwidth]{../outputs/memo_analysis_dataset.png}
+    \caption{Final quarterly analysis dataset used in estimation: employment growth (\(E\)), change in unemployment (\(U\)), and GDP growth (\(Y\)).}
+\end{figure}
+
+\section{Empirical Caveats}
+\begin{itemize}
+    \item These are reduced-form relationships, not structural labour-market models.
+    \item Results depend on the choice of calibration for the state variance; the memo uses \(\sigma_{\eta}=0.05\,\sigma_{OLS}\) as a deliberately smooth benchmark.
+    \item The COVID pulse dummies improve robustness, but unusual episodes can still influence the estimated latent intercept.
+    \item The \(Y \rightarrow E\) specification gives a different break-even interpretation from the direct \(Y \rightarrow U\) benchmark and should not be over-interpreted on its own.
+    \item The chained \(Y \rightarrow E \rightarrow U\) comparison is an internal consistency check, not an independent identification strategy.
+\end{itemize}
+
+\end{document}
