@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+import re
+import csv
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -12,10 +14,15 @@ from statsmodels.tsa.seasonal import STL
 
 
 BFS_HOUSEHOLD_URL = "https://dam-api.bfs.admin.ch/hub/api/dam/assets/36346767/master"
+BFS_HOUSEHOLD_ASSET_PAGE_URL = "https://www.bfs.admin.ch/bfs/en/home/statistics/work-income/surveys/ets.assetdetail.36346767.html"
+BFS_HOUSEHOLD_TOTALS_URL = "https://dam-api.bfs.admin.ch/hub/api/dam/assets/36710247/master"
+BFS_HOUSEHOLD_TOTALS_ASSET_PAGE_URL = "https://www.bfs.admin.ch/asset/en/ts-x-03.02.01.02a"
 BFS_FIRM_URL = "https://dam-api.bfs.admin.ch/hub/api/dam/assets/36412419/master"
-SECO_GDP_URL = (
+BFS_FIRM_ASSET_PAGE_URL = "https://www.bfs.admin.ch/asset/en/px-x-0602000000_101"
+SECO_GDP_URLS = (
     "https://www.seco.admin.ch/dam/seco/en/dokumente/Wirtschaft/Wirtschaftslage/"
-    "BIP_Daten/ch_seco_gdp_csv.csv.download.csv/ch_seco_gdp.csv"
+    "BIP_Daten/ch_seco_gdp_csv.csv.download.csv/ch_seco_gdp.csv",
+    "https://scheduler.swissdatas.ch/scheduled/ch-seco-gdp.csv",
 )
 SNB_APP_PROPERTIES_URL = "https://data.snb.ch/json/application/properties"
 SNB_CUBE_EXPORT_URL = "https://data.snb.ch/json/file/cube"
@@ -25,6 +32,7 @@ SNB_URATE_SERIES_CODE = "S1"
 
 RAW_FILE_NAMES = {
     "household_xlsx": "bfs_household_ets_36346767.xlsx",
+    "household_csv": "bfs_household_ets_current_totals.csv",
     "firm_xlsx": "bfs_firm_besta_36412419.xlsx",
     "gdp_csv": "seco_gdp_ch_seco_gdp.csv",
     "unemployment_csv": "snb_amarbma_unemployment.csv",
@@ -38,17 +46,62 @@ def download_raw_data(data_dir: str | Path) -> dict[str, Path]:
 
     outputs = {
         "household_xlsx": data_dir / RAW_FILE_NAMES["household_xlsx"],
+        "household_csv": data_dir / RAW_FILE_NAMES["household_csv"],
         "firm_xlsx": data_dir / RAW_FILE_NAMES["firm_xlsx"],
         "gdp_csv": data_dir / RAW_FILE_NAMES["gdp_csv"],
         "unemployment_csv": data_dir / RAW_FILE_NAMES["unemployment_csv"],
     }
 
-    outputs["household_xlsx"].write_bytes(urlopen(BFS_HOUSEHOLD_URL).read())
-    outputs["firm_xlsx"].write_bytes(urlopen(BFS_FIRM_URL).read())
-    outputs["gdp_csv"].write_bytes(urlopen(SECO_GDP_URL).read())
+    household_url = _resolve_bfs_master_url(BFS_HOUSEHOLD_ASSET_PAGE_URL, BFS_HOUSEHOLD_URL)
+    household_totals_url = _resolve_bfs_master_url(
+        BFS_HOUSEHOLD_TOTALS_ASSET_PAGE_URL,
+        BFS_HOUSEHOLD_TOTALS_URL,
+    )
+    firm_url = _resolve_bfs_master_url(BFS_FIRM_ASSET_PAGE_URL, BFS_FIRM_URL)
+
+    outputs["household_xlsx"].write_bytes(urlopen(household_url).read())
+    outputs["household_csv"].write_bytes(urlopen(household_totals_url).read())
+    outputs["firm_xlsx"].write_bytes(urlopen(firm_url).read())
+    outputs["gdp_csv"].write_bytes(_download_first_working(SECO_GDP_URLS))
     outputs["unemployment_csv"].write_bytes(fetch_snb_unemployment_raw_csv().encode("utf-8"))
 
     return outputs
+
+
+def _resolve_bfs_master_url(asset_page_url: str, fallback_master_url: str) -> str:
+    """
+    Resolve the latest BFS DAM asset id from a public asset page.
+
+    Some BFS content pages move to a new underlying DAM asset id when a table is
+    updated. Scraping the page metadata keeps us on the current release while
+    preserving a stable fallback when the page lookup fails.
+    """
+    try:
+        html = urlopen(asset_page_url).read().decode("utf-8", errors="ignore")
+    except Exception:
+        return fallback_master_url
+
+    match = re.search(r"dam/assets/(\d+)/(?:thumbnail|master)", html)
+    if not match:
+        match = re.search(r"/asset/[a-z]{2}/(\d+)", html)
+    if not match:
+        return fallback_master_url
+    return f"https://dam-api.bfs.admin.ch/hub/api/dam/assets/{match.group(1)}/master"
+
+
+def _download_first_working(urls: tuple[str, ...]) -> bytes:
+    last_error: Exception | None = None
+    for url in urls:
+        try:
+            payload = urlopen(url).read()
+            if payload.startswith(b"502 Bad Gateway"):
+                raise ValueError(f"Bad gateway response from {url}")
+            return payload
+        except Exception as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No download URLs supplied.")
 
 
 def fetch_snb_unemployment_raw_csv() -> str:
@@ -76,13 +129,45 @@ def fetch_snb_unemployment_raw_csv() -> str:
         return response.read().decode("utf-8-sig")
 
 
-def load_household_employment_quarterly(path: str | Path) -> pd.DataFrame:
+def load_household_employment_quarterly(
+    path: str | Path,
+    live_totals_path: str | Path | None = None,
+) -> pd.DataFrame:
     """
     Load quarterly BFS household-survey employment totals.
 
     The file contains both raw totals and seasonally adjusted totals on the
     `Quartalswerte` sheet.
     """
+    if live_totals_path is not None:
+        official = _load_household_employment_xlsx(path)
+        live = _load_household_employment_live_csv(live_totals_path)
+        merged = live.merge(
+            official.loc[:, ["date", "household_employment_total_sa"]],
+            on="date",
+            how="left",
+        )
+        return merged.sort_values("date").reset_index(drop=True)
+
+    if Path(path).suffix.lower() == ".csv":
+        live = _load_household_employment_live_csv(path)
+        sibling_xlsx = Path(path).with_name(RAW_FILE_NAMES["household_xlsx"])
+        if sibling_xlsx.exists():
+            official = _load_household_employment_xlsx(sibling_xlsx)
+            live = live.merge(
+                official.loc[:, ["date", "household_employment_total_sa"]],
+                on="date",
+                how="left",
+            )
+        else:
+            live["household_employment_total_sa"] = np.nan
+        return live.sort_values("date").reset_index(drop=True)
+
+    return _load_household_employment_xlsx(path)
+
+
+def _load_household_employment_xlsx(path: str | Path) -> pd.DataFrame:
+    """Load the legacy ETS workbook with raw and official SA totals."""
     raw = pd.read_excel(path, sheet_name="Quartalswerte", header=None)
     periods = raw.iloc[2, 1:].dropna()
     dates = pd.Index([_parse_bfs_quarter_label(x) for x in periods], name="date")
@@ -99,12 +184,39 @@ def load_household_employment_quarterly(path: str | Path) -> pd.DataFrame:
     ).sort_values("date").reset_index(drop=True)
 
 
+def _load_household_employment_live_csv(path: str | Path) -> pd.DataFrame:
+    """
+    Load the newer ETS open-data CSV with total household employment.
+
+    The current open-data release provides the up-to-date raw total series,
+    while the official SA overlap is still sourced from the legacy workbook.
+    """
+    raw = pd.read_csv(path)
+    mask = (
+        (raw["FREQ"] == "Q")
+        & (raw["UNIT_MES"] == "UM_1")
+        & (raw["GENDER_DE"] == "Total")
+        & (raw["DETAILS_DE"] == "Total")
+        & (raw["MEASURE_DE"] == "Durchschnittliche Quartalswerte")
+    )
+    out = raw.loc[mask, ["PERIOD", "VALUE"]].copy()
+    out["date"] = pd.PeriodIndex(out["PERIOD"], freq="Q").to_timestamp(how="start")
+    # The open-data CSV is published in persons, while the legacy ETS workbook
+    # used elsewhere in the project is in thousands of persons.
+    out["household_employment_total"] = pd.to_numeric(out["VALUE"], errors="coerce") / 1000.0
+    out = out.loc[:, ["date", "household_employment_total"]].dropna(subset=["household_employment_total"])
+    return out.sort_values("date").reset_index(drop=True)
+
+
 def load_firm_employment_quarterly(path: str | Path) -> pd.DataFrame:
     """Load quarterly BFS firm-survey total employment, raw and seasonally adjusted."""
-    raw = _load_besta_total_sheet(path, "Total")
-    sa = _load_besta_total_sheet(path, "Total saisonbereinigt")
-    merged = raw.merge(sa, on="date", how="outer")
-    return merged.sort_values("date").reset_index(drop=True)
+    try:
+        raw = _load_besta_total_sheet(path, "Total")
+        sa = _load_besta_total_sheet(path, "Total saisonbereinigt")
+        merged = raw.merge(sa, on="date", how="outer")
+        return merged.sort_values("date").reset_index(drop=True)
+    except Exception:
+        return _load_besta_total_text_export(path)
 
 
 def _load_besta_total_sheet(path: str | Path, sheet_name: str) -> pd.DataFrame:
@@ -125,6 +237,44 @@ def _load_besta_total_sheet(path: str | Path, sheet_name: str) -> pd.DataFrame:
         else "firm_employment_total"
     )
     return pd.DataFrame({"date": dates, value_name: values.to_numpy()})
+
+
+def _load_besta_total_text_export(path: str | Path) -> pd.DataFrame:
+    """
+    Load the newer BESTA text export published from the BFS PX-Web asset page.
+
+    The live asset currently comes as a semicolon-delimited text table rather
+    than the older multi-sheet Excel workbook.
+    """
+    with Path(path).open("r", encoding="latin1", newline="") as handle:
+        rows = list(csv.reader(handle, delimiter=";"))
+
+    if len(rows) < 7:
+        raise ValueError("BESTA text export is unexpectedly short.")
+
+    total_col = 4
+    sa_col = 22
+    data_rows = rows[6:]
+    out_rows: list[dict[str, object]] = []
+    for row in data_rows:
+        if len(row) <= sa_col:
+            continue
+        code = row[0].strip()
+        quarter = row[2].strip()
+        if code != "5-96" or not quarter:
+            continue
+        out_rows.append(
+            {
+                "date": pd.Period(quarter, freq="Q").to_timestamp(how="start"),
+                "firm_employment_total": pd.to_numeric(row[total_col], errors="coerce"),
+                "firm_employment_total_sa": pd.to_numeric(row[sa_col], errors="coerce"),
+            }
+        )
+
+    if not out_rows:
+        raise ValueError("Could not find the BESTA total row in the text export.")
+
+    return pd.DataFrame(out_rows).sort_values("date").reset_index(drop=True)
 
 
 def load_unemployment_monthly(path: str | Path) -> pd.DataFrame:
@@ -163,6 +313,41 @@ def load_seco_gdp_quarterly(path: str | Path) -> pd.DataFrame:
     wide = gdp.pivot(index="date", columns="series_name", values="value").reset_index()
     wide.columns.name = None
     return wide.sort_values("date").reset_index(drop=True)
+
+
+def append_gdp_flash_bridge(
+    gdp: pd.DataFrame,
+    flash_date: str | pd.Timestamp,
+    flash_qoq_pct: float,
+    target_col: str = "gdp_real_cssa",
+) -> pd.DataFrame:
+    """
+    Append a temporary GDP flash bridge to the detailed quarterly GDP panel.
+
+    The flash is interpreted as q/q growth for the target series. We only fill
+    the bridged observation when the quarter is not already present.
+    """
+    result = gdp.copy().sort_values("date").reset_index(drop=True)
+    flash_date = pd.Timestamp(flash_date)
+    if (result["date"] == flash_date).any():
+        return result
+
+    history = result.loc[result[target_col].notna(), ["date", target_col]].copy()
+    if history.empty:
+        raise ValueError(f"Cannot append GDP flash because '{target_col}' has no history.")
+
+    last = history.iloc[-1]
+    if flash_date <= last["date"]:
+        raise ValueError("Flash date must be later than the latest observed GDP quarter.")
+
+    new_row = {col: np.nan for col in result.columns}
+    new_row["date"] = flash_date
+    new_row[target_col] = float(last[target_col]) * (1.0 + float(flash_qoq_pct) / 100.0)
+    if "gdp_source" in result.columns:
+        new_row["gdp_source"] = "flash"
+
+    result = pd.concat([result, pd.DataFrame([new_row])], ignore_index=True)
+    return result.sort_values("date").reset_index(drop=True)
 
 
 def build_quarterly_panel(
